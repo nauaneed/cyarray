@@ -1,4 +1,5 @@
 <%
+import platform
 type_info = [
     ('int', 'IntArray', 'NPY_INT'),
     ('unsigned int', 'UIntArray', 'NPY_UINT'),
@@ -37,11 +38,13 @@ The numpy array may however be copied and used in any manner.
 
 # For malloc etc.
 from libc.stdlib cimport *
-IF UNAME_SYSNAME == "Windows":
-    cdef extern from "msstdint.h" nogil:
-        ctypedef unsigned int uintptr_t
-ELSE:
-    from libc.stdint cimport uintptr_t
+
+% if platform.system() == "Windows":
+cdef extern from "msstdint.h" nogil:
+    ctypedef unsigned int uintptr_t
+% else:
+from libc.stdint cimport uintptr_t
+% endif
 
 cimport numpy as np
 
@@ -76,7 +79,7 @@ cdef extern from "stdlib.h":
 # numpy module initialization call
 _import_array()
 
-cdef inline long aligned(long n, int item_size) nogil:
+cdef inline long aligned(long n, int item_size) noexcept nogil:
     """Align `n` items each having size (in bytes) `item_size` to
     64 bytes and return the appropriate number of items that would
     be aligned to 64 bytes.
@@ -135,13 +138,13 @@ cdef void* _deref_base(void* ptr) nogil:
             raise MemoryError("Passed pointer is not aligned.")
     return <void*>base
 
-cdef void* aligned_malloc(size_t bytes) nogil:
+cdef void* aligned_malloc(size_t bytes) noexcept nogil:
     return _aligned_malloc(bytes)
 
-cdef void* aligned_realloc(void* p, size_t bytes, size_t old_size) nogil:
+cdef void* aligned_realloc(void* p, size_t bytes, size_t old_size) noexcept nogil:
     return _aligned_realloc(p, bytes, old_size)
 
-cdef void aligned_free(void* p) nogil:
+cdef void aligned_free(void* p) noexcept nogil:
     """Free block allocated by alligned_malloc.
     """
     free(<void*>_deref_base(p))
@@ -158,10 +161,10 @@ cdef class BaseArray:
         """
         pass
 
-    cdef void c_reserve(self, long size) nogil:
+    cdef void c_reserve(self, long size) noexcept nogil:
         pass
 
-    cdef void c_reset(self) nogil:
+    cdef void c_reset(self):
         cdef PyArrayObject* arr = <PyArrayObject*>self._npy_array
         self.length = 0
         arr.dimensions[0] = self.length
@@ -440,7 +443,7 @@ cdef class ${CLASSNAME}(BaseArray):
         # update the numpy arrays length
         arr.dimensions[0] = self.length
 
-    cdef void c_reserve(self, long size) nogil:
+    cdef void c_reserve(self, long size) noexcept nogil:
         cdef PyArrayObject* arr = <PyArrayObject*>self._npy_array
         cdef void* data = NULL
         if size > self.alloc:
@@ -458,12 +461,16 @@ cdef class ${CLASSNAME}(BaseArray):
             self.alloc = size
             arr.data = <char *>self.data
 
-    cdef void c_reset(self) nogil:
+    cdef void c_reset(self):
+        cdef np.npy_intp dims = self.length
         BaseArray.c_reset(self)
         if self._old_data != NULL:
             self.data = self._old_data
             self._old_data = NULL
-            self._npy_array.data = <char *>self.data
+
+            self._npy_array = PyArray_SimpleNewFromData(
+                1, &dims, ${NUMPY_TYPENAME}, self.data
+            )
 
     cdef void c_resize(self, long size) nogil:
         cdef PyArrayObject* arr = <PyArrayObject*>self._npy_array
